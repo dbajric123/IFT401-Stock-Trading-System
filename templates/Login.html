@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Log In{% endblock %}
+{% block subtitle %}Log in with your username and password.{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <form method="POST" action="/login">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" value="{{ username }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Log In</button>
+                    <a href="/login" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+        <p class="text-muted mt-3">New customer? <a href="/register">Create Account</a>.</p>
+    </div>
+</div>
+{% endblock %}
