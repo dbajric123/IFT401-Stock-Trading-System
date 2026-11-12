@@ -215,3 +215,66 @@ def is_market_open():
 @app.context_processor
 def inject_market_status():
     return {'market_open': is_market_open()}
+
+# Shows the sign-up form. On submit it checks the fields, saves a new
+# customer with a hashed password and $0.00 cash, and logs them in.
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        full_name = request.form.get('full_name', '').strip()
+        email = request.form.get('email', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        if not full_name or not email or not username or not password:
+            flash('Please fill in every field.', 'danger')
+        elif User.query.filter_by(username=username).first():
+            flash('That username is already taken.', 'danger')
+        elif User.query.filter_by(email=email).first():
+            flash('That email is already used.', 'danger')
+        else:
+            try:
+                hashed = bcrypt.generate_password_hash(password).decode('utf-8')
+                new_user = User(full_name=full_name, email=email, username=username,
+                                password=hashed, role='user', cash_balance=0)
+                db.session.add(new_user)
+                db.session.commit()
+                login_user(new_user)
+                return redirect('/')
+            except Exception:
+                db.session.rollback()
+                flash('Something went wrong. Please try again.', 'danger')
+
+        # An error happened, so show the form again with what they typed
+        return render_template('register.html', full_name=full_name, email=email, username=username)
+
+    return render_template('register.html')
+
+
+# Shows the login form. On submit it checks the password and sends
+# customers to their dashboard and admins to Manage Stocks.
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        user = User.query.filter_by(username=username).first()
+        if user and bcrypt.check_password_hash(user.password, password):
+            login_user(user)
+            if user.role == 'admin':
+                return redirect('/admin/stocks')
+            return redirect('/')
+
+        # One general message so nobody can tell which part was wrong
+        flash('Wrong username or password.', 'danger')
+        return render_template('login.html', username=username)
+
+    return render_template('login.html')
+
+
+# Ends the session and returns to the login page.
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect('/login')
