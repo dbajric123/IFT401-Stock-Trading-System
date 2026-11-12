@@ -17,12 +17,17 @@ Team: Dino Bajric, Nikolas Hooper-Torres, Vipra Mehta
 | Price Monitor (admin) | /admin/prices | admin_prices.html | Nikolas |
 | Buy Stock | /buy | buy.html | Dino |
 | Sell Stock | /sell | sell.html | Dino |
+| Transaction History | /history | history.html | Dino |
 | My Portfolio | / | dashboard.html | Vipra |
 | Create Portfolio | /portfolio/new | create_portfolio.html | Vipra |
 | Stock Inventory | /stocks | stocks.html | Vipra |
 | Deposit Cash | /deposit | deposit.html | Vipra |
 | Withdraw Cash | /withdraw | withdraw.html | Vipra |
-| Transaction History | /history | history.html | Vipra |
+
+The **Price Generator** (Dino) has no page. Every 5 minutes, only while the market
+is open, it moves each stock price up or down by up to 2% (never below $0.01) and
+saves the change to `stocks` and `stock_price_history`. The Price Monitor page
+(Nikolas) shows those changes.
 
 Each person's code is in their own section of `app.py` (`# === NIKOLAS ===`,
 `# === DINO ===`, `# === VIPRA ===`).
