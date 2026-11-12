@@ -278,3 +278,71 @@ def login():
 def logout():
     logout_user()
     return redirect('/login')
+
+
+# ======================================================================
+# === DINO ===
+# Buy Stock (SAD Map 3) and Sell Stock (SAD Map 4)
+
+MARKET_CLOSED = 'Market is closed. Trading hours are Mon–Fri, 9:00 AM–5:00 PM.'
+
+
+# Gets one of the logged-in customer's portfolios (None if it isn't theirs).
+def get_my_portfolio(portfolio_id):
+    return Portfolio.query.filter_by(id=portfolio_id, user_id=current_user.id).first()
+
+
+# Reads the shares box. Returns None unless it is a whole number above 0.
+def read_quantity(text):
+    text = (text or '').strip()
+    if not text.isdigit() or int(text) == 0:
+        return None
+    return int(text)
+
+
+# BUY - Shows the order form (GET). Checks the order and shows the
+# confirm box with the estimated total (POST).
+@app.route('/buy', methods=['GET', 'POST'])
+@login_required
+def buy():
+    if request.method == 'POST':
+        portfolio = get_my_portfolio(request.form.get('portfolio_id', type=int))
+        stock = Stock.query.filter_by(id=request.form.get('stock_id', type=int)).first()
+        quantity = read_quantity(request.form.get('quantity'))
+
+        if not is_market_open():
+            flash(MARKET_CLOSED, 'danger')
+            return redirect(url_for('buy'))
+
+        if portfolio is None or stock is None:
+            flash('Please choose a portfolio and a stock.', 'danger')
+            return redirect(url_for('buy'))
+
+        if quantity is None:
+            flash('Please enter a whole number of shares greater than 0.', 'danger')
+            return redirect(url_for('buy'))
+
+        if quantity > stock.shares_available:
+            flash('Not enough shares available. Only {:,} shares of {} are left.'.format(
+                stock.shares_available, stock.ticker), 'danger')
+            return redirect(url_for('buy'))
+
+        total = stock.current_price * quantity
+        if total > current_user.cash_balance:
+            flash('Not enough cash. This order costs {} and your cash balance is {}.'.format(
+                money(total), money(current_user.cash_balance)), 'danger')
+            return redirect(url_for('buy'))
+
+        # Save the order as PENDING until the customer clicks Confirm or Cancel
+        trade = Trade(portfolio_id=portfolio.id, stock_id=stock.id, trade_type='BUY',
+                      quantity=quantity, price=stock.current_price, total=total, status='PENDING')
+        db.session.add(trade)
+        db.session.commit()
+
+        new_balance = current_user.cash_balance - total
+        return render_template('buy.html', trade=trade, stock=stock, portfolio=portfolio,
+                               new_balance=new_balance)
+
+    portfolios = Portfolio.query.filter_by(user_id=current_user.id).all()
+    stocks = Stock.query.order_by(Stock.ticker).all()
+    return render_template('buy.html', portfolios=portfolios, stocks=stocks)
