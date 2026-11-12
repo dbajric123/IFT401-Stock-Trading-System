@@ -275,6 +275,7 @@ def login():
 
 # Ends the session and returns to the login page.
 @app.route('/logout')
+@login_required
 def logout():
     logout_user()
     return redirect('/login')
