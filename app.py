@@ -436,3 +436,67 @@ def cancel_trade(trade_id):
         flash('Something went wrong while canceling the order. Please try again.', 'danger')
 
     return redirect(url_for('buy'))
+
+# SELL - Shows only the stocks held in the chosen portfolio (GET). Checks
+# the order and shows the confirm box with the expected proceeds (POST).
+@app.route('/sell', methods=['GET', 'POST'])
+@login_required
+def sell():
+    if request.method == 'POST':
+        portfolio_id = request.form.get('portfolio_id', type=int)
+        portfolio = get_my_portfolio(portfolio_id)
+        stock = Stock.query.filter_by(id=request.form.get('stock_id', type=int)).first()
+        quantity = read_quantity(request.form.get('quantity'))
+
+        holding = None
+        if portfolio and stock:
+            holding = Holding.query.filter_by(portfolio_id=portfolio.id, stock_id=stock.id).first()
+
+        if not is_market_open():
+            flash(MARKET_CLOSED, 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        if holding is None:
+            flash('Please choose a stock you own in this portfolio.', 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        if quantity is None:
+            flash('Please enter a whole number of shares greater than 0.', 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        if quantity > holding.quantity:
+            flash('You only own {:,} shares of {} in this portfolio.'.format(
+                holding.quantity, stock.ticker), 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        # Save the order as PENDING until the customer clicks Confirm or Cancel
+        total = stock.current_price * quantity
+        trade = Trade(portfolio_id=portfolio.id, stock_id=stock.id, trade_type='SELL',
+                      quantity=quantity, price=stock.current_price, total=total, status='PENDING')
+        try:
+            db.session.add(trade)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash('Something went wrong while saving the order. Please try again.', 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        new_balance = current_user.cash_balance + total
+        return render_template('sell.html', trade=trade, stock=stock, portfolio=portfolio,
+                               new_balance=new_balance)
+
+    portfolios = Portfolio.query.filter_by(user_id=current_user.id).order_by(Portfolio.name).all()
+
+    # Show the portfolio picked in the dropdown, or the first one
+    portfolio = get_my_portfolio(request.args.get('portfolio_id', type=int))
+    if portfolio is None and portfolios:
+        portfolio = portfolios[0]
+
+    # Each row in the table needs the holding and its stock
+    holdings = []
+    if portfolio:
+        for holding in Holding.query.filter_by(portfolio_id=portfolio.id).all():
+            stock = db.session.get(Stock, holding.stock_id)
+            holdings.append((holding, stock))
+
+    return render_template('sell.html', portfolios=portfolios, portfolio=portfolio, holdings=holdings)
