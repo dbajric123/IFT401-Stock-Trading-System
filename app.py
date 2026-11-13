@@ -301,6 +301,23 @@ def read_quantity(text):
     return int(text)
 
 
+# Gets a PENDING trade, but only if it is in one of the customer's portfolios.
+def get_my_pending_trade(trade_id):
+    trade = Trade.query.filter_by(id=trade_id, status='PENDING').first()
+    if trade is None or get_my_portfolio(trade.portfolio_id) is None:
+        return None
+    return trade
+
+
+# Undoes anything half saved and marks the trade FAILED with the reason.
+def fail_trade(trade, reason):
+    db.session.rollback()
+    trade.status = 'FAILED'
+    trade.failure_reason = reason
+    db.session.commit()
+    flash('Order failed: ' + reason, 'danger')
+
+
 # BUY - Shows the order form (GET). Checks the order and shows the
 # confirm box with the estimated total (POST).
 @app.route('/buy', methods=['GET', 'POST'])
@@ -337,8 +354,13 @@ def buy():
         # Save the order as PENDING until the customer clicks Confirm or Cancel
         trade = Trade(portfolio_id=portfolio.id, stock_id=stock.id, trade_type='BUY',
                       quantity=quantity, price=stock.current_price, total=total, status='PENDING')
-        db.session.add(trade)
-        db.session.commit()
+        try:
+            db.session.add(trade)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash('Something went wrong while saving the order. Please try again.', 'danger')
+            return redirect(url_for('buy'))
 
         new_balance = current_user.cash_balance - total
         return render_template('buy.html', trade=trade, stock=stock, portfolio=portfolio,
@@ -347,3 +369,70 @@ def buy():
     portfolios = Portfolio.query.filter_by(user_id=current_user.id).all()
     stocks = Stock.query.order_by(Stock.ticker).all()
     return render_template('buy.html', portfolios=portfolios, stocks=stocks)
+
+
+# BUY - Confirm button. In one save: cash down, shares available down,
+# holding up, trade COMPLETED and a BUY cash row. If anything fails,
+# nothing changes and the trade is saved as FAILED with the reason.
+@app.route('/buy/confirm/<int:trade_id>', methods=['POST'])
+@login_required
+def confirm_buy(trade_id):
+    trade = get_my_pending_trade(trade_id)
+    if trade is None:
+        flash('That order could not be found.', 'danger')
+        return redirect(url_for('buy'))
+
+    stock = db.session.get(Stock, trade.stock_id)
+
+    # Check again, things could have changed since the customer reviewed it
+    if not is_market_open():
+        fail_trade(trade, MARKET_CLOSED)
+        return redirect(url_for('buy'))
+    if trade.quantity > stock.shares_available:
+        fail_trade(trade, 'Not enough shares available.')
+        return redirect(url_for('buy'))
+    if trade.total > current_user.cash_balance:
+        fail_trade(trade, 'Not enough cash.')
+        return redirect(url_for('buy'))
+
+    try:
+        current_user.cash_balance = current_user.cash_balance - trade.total
+        stock.shares_available = stock.shares_available - trade.quantity
+
+        holding = Holding.query.filter_by(portfolio_id=trade.portfolio_id, stock_id=stock.id).first()
+        if holding is None:
+            holding = Holding(portfolio_id=trade.portfolio_id, stock_id=stock.id, quantity=0)
+            db.session.add(holding)
+        holding.quantity = holding.quantity + trade.quantity
+
+        trade.status = 'COMPLETED'
+        db.session.add(CashTransaction(user_id=current_user.id, transaction_type='BUY', amount=trade.total,
+                                       status='COMPLETED', related_trade_id=trade.id))
+        db.session.commit()
+        flash('Bought {:,} shares of {} for {}. Your new cash balance is {}.'.format(
+            trade.quantity, stock.ticker, money(trade.total), money(current_user.cash_balance)), 'success')
+    except Exception:
+        fail_trade(trade, 'Something went wrong while saving the order. Please try again.')
+
+    return redirect(url_for('buy'))
+
+
+# Cancel button on the confirm box. Marks the order CANCELED and changes
+# nothing else.
+@app.route('/trade/cancel/<int:trade_id>', methods=['POST'])
+@login_required
+def cancel_trade(trade_id):
+    trade = get_my_pending_trade(trade_id)
+    if trade is None:
+        flash('That order could not be found.', 'danger')
+        return redirect(url_for('buy'))
+
+    try:
+        trade.status = 'CANCELED'
+        db.session.commit()
+        flash('Order canceled. Nothing was changed.', 'success')
+    except Exception:
+        db.session.rollback()
+        flash('Something went wrong while canceling the order. Please try again.', 'danger')
+
+    return redirect(url_for('buy'))

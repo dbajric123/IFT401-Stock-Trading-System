@@ -16,7 +16,11 @@
                 <p class="mb-1"><strong>Shares:</strong> {{ "{:,}".format(trade.quantity) }}</p>
                 <p class="mb-1"><strong>Price:</strong> {{ trade.price | money }}</p>
                 <p class="mb-1"><strong>Estimated Total:</strong> {{ trade.total | money }}</p>
-                <p class="mb-0"><strong>New Cash Balance:</strong> {{ new_balance | money }}</p>
+                <p class="mb-3"><strong>New Cash Balance:</strong> {{ new_balance | money }}</p>
+                <form method="POST">
+                    <button type="submit" formaction="{{ url_for('confirm_buy', trade_id=trade.id) }}" class="btn btn-success">Confirm</button>
+                    <button type="submit" formaction="{{ url_for('cancel_trade', trade_id=trade.id) }}" class="btn btn-secondary">Cancel</button>
+                </form>
             </div>
         </div>
     </div>
