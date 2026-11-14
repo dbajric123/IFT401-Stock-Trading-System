@@ -1,5 +1,6 @@
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
+from decimal import Decimal, InvalidOperation
 
 from flask import Flask, render_template, redirect, url_for, flash, request
 from flask_sqlalchemy import SQLAlchemy
@@ -279,6 +280,61 @@ def login():
 def logout():
     logout_user()
     return redirect('/login')
+
+# Shows the stock form and the list of all stocks (administrators only).
+# On submit it checks the form and saves the new stock with its first price.
+@app.route('/admin/stocks', methods=['GET', 'POST'])
+@admin_required
+def admin_stocks():
+    company = ''
+    ticker = ''
+    shares_text = ''
+    price_text = ''
+
+    if request.method == 'POST':
+        company = request.form.get('company_name', '').strip()
+        ticker = request.form.get('ticker', '').strip().upper()
+        shares_text = request.form.get('shares', '').strip()
+        price_text = request.form.get('starting_price', '').strip()
+
+        # Turn the shares and price boxes into numbers (None if not valid)
+        shares = int(shares_text) if shares_text.isdigit() else None
+        try:
+            price = Decimal(price_text).quantize(Decimal('0.01'))
+            if not price.is_finite():
+                price = None
+        except InvalidOperation:
+            price = None
+
+        if not company or not ticker or not shares_text or not price_text:
+            flash('Please fill in every field.', 'danger')
+        elif Stock.query.filter_by(ticker=ticker).first():
+            flash('Ticker {} is already used.'.format(ticker), 'danger')
+        elif shares is None or shares == 0:
+            flash('Shares must be a whole number greater than 0.', 'danger')
+        elif price is None or price <= 0:
+            flash('Starting price must be more than $0.00.', 'danger')
+        else:
+            try:
+                # Save the stock and its first price record in one commit
+                stock = Stock(company_name=company, ticker=ticker,
+                              shares_outstanding=shares, shares_available=shares,
+                              current_price=price, created_by=current_user.id)
+                db.session.add(stock)
+                db.session.flush()
+                first_price = StockPriceHistory(stock_id=stock.id, old_price=price, new_price=price)
+                db.session.add(first_price)
+                db.session.commit()
+                flash('Added {} - {} at {}.'.format(ticker, company, money(price)), 'success')
+                return redirect(url_for('admin_stocks'))
+            except Exception:
+                db.session.rollback()
+                flash('Something went wrong. The stock was not saved.', 'danger')
+
+    # Every stock with the username of the admin who added it
+    stocks = db.session.query(Stock, User.username).join(User, Stock.created_by == User.id).order_by(Stock.ticker).all()
+    return render_template('admin_stocks.html', stocks=stocks, company=company, ticker=ticker,
+                           shares_text=shares_text, price_text=price_text)
 
 
 # ======================================================================

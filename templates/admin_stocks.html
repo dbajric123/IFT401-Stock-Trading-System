@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Manage Stocks{% endblock %}
+{% block subtitle %}Add a stock for customers to trade. Administrators only.{% endblock %}
+
+{% block content %}
+
+<!-- Add a stock -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="POST" action="/admin/stocks">
+                    <div class="mb-3">
+                        <label for="company_name" class="form-label">Company Name</label>
+                        <input type="text" class="form-control" id="company_name" name="company_name" maxlength="100" value="{{ company }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ticker" class="form-label">Ticker</label>
+                        <input type="text" class="form-control" id="ticker" name="ticker" maxlength="10" value="{{ ticker }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="shares" class="form-label">Shares</label>
+                        <input type="number" class="form-control" id="shares" name="shares" min="1" step="1" value="{{ shares_text }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="starting_price" class="form-label">Starting Price</label>
+                        <input type="number" class="form-control" id="starting_price" name="starting_price" min="0.01" step="0.01" value="{{ price_text }}" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Stock</button>
+                    <a href="/admin/stocks" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Every stock -->
+<h5>All Stocks</h5>
+{% if stocks %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Ticker</th>
+            <th>Company</th>
+            <th class="text-end">Shares</th>
+            <th class="text-end">Shares Available</th>
+            <th class="text-end">Current Price</th>
+            <th>Created By</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for stock, creator in stocks %}
+        <tr>
+            <td>{{ stock.ticker }}</td>
+            <td>{{ stock.company_name }}</td>
+            <td class="text-end">{{ "{:,}".format(stock.shares_outstanding) }}</td>
+            <td class="text-end">{{ "{:,}".format(stock.shares_available) }}</td>
+            <td class="text-end">{{ stock.current_price | money }}</td>
+            <td>{{ creator }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">No stocks yet.</p>
+{% endif %}
+
+{% endblock %}
