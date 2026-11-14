@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Market Hours{% endblock %}
+{% block subtitle %}Set the weekly trading hours and add holiday closures. Administrators only.{% endblock %}
+
+{% block content %}
+
+<!-- Weekly hours -->
+<h5>Weekly Hours</h5>
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Day</th>
+            <th>Open?</th>
+            <th>Open Time</th>
+            <th>Close Time</th>
+            <th>Changed By</th>
+            <th>Changed At</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row, changed_by in hours %}
+        <tr>
+            <td>{{ row.day_of_week }}</td>
+            <td>{{ 'Yes' if row.is_open else 'No' }}</td>
+            <td>{{ row.open_time | clock }}</td>
+            <td>{{ row.close_time | clock }}</td>
+            <td>{{ changed_by or '' }}</td>
+            <td>{{ row.updated_at | datetime }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Change one day -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="POST" action="/admin/market-hours">
+                    <input type="hidden" name="action" value="save_hours">
+                    <div class="mb-3">
+                        <label for="day" class="form-label">Day</label>
+                        <select class="form-select" id="day" name="day">
+                            {% for d in week_days %}
+                            <option value="{{ d }}" {{ 'selected' if d == form_day else '' }}>{{ d }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="status" class="form-label">Status</label>
+                        <select class="form-select" id="status" name="status">
+                            <option value="open" {{ 'selected' if form_status == 'open' else '' }}>Open</option>
+                            <option value="closed" {{ 'selected' if form_status == 'closed' else '' }}>Closed</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="open_time" class="form-label">Open Time</label>
+                        <input type="time" class="form-control" id="open_time" name="open_time" value="{{ open_text }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="close_time" class="form-label">Close Time</label>
+                        <input type="time" class="form-control" id="close_time" name="close_time" value="{{ close_text }}">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Hours</button>
+                    <a href="/admin/market-hours" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Holiday closures -->
+<h5>Holiday Closures</h5>
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="POST" action="/admin/market-hours">
+                    <input type="hidden" name="action" value="add_closure">
+                    <div class="mb-3">
+                        <label for="closure_date" class="form-label">Date</label>
+                        <input type="date" class="form-control" id="closure_date" name="closure_date" value="{{ closure_text }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="reason" class="form-label">Reason</label>
+                        <input type="text" class="form-control" id="reason" name="reason" maxlength="255" value="{{ reason_text }}" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Closure</button>
+                    <a href="/admin/market-hours" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if closures %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Reason</th>
+            <th>Added By</th>
+            <th>Added At</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for closure, added_by in closures %}
+        <tr>
+            <td>{{ closure.closure_date | shortdate }}</td>
+            <td>{{ closure.reason }}</td>
+            <td>{{ added_by or '' }}</td>
+            <td>{{ closure.updated_at | datetime }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">No holidays yet.</p>
+{% endif %}
+
+{% endblock %}

@@ -2,6 +2,9 @@ import os
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
+import random
+import threading
+from decimal import Decimal, InvalidOperation
 
 from flask import Flask, render_template, redirect, url_for, flash, request
 from flask_sqlalchemy import SQLAlchemy
@@ -282,6 +285,177 @@ def logout():
     logout_user()
     return redirect('/login')
 
+# Shows the stock form and the list of all stocks (administrators only).
+# On submit it checks the form and saves the new stock with its first price.
+@app.route('/admin/stocks', methods=['GET', 'POST'])
+@admin_required
+def admin_stocks():
+    company = ''
+    ticker = ''
+    shares_text = ''
+    price_text = ''
+
+    if request.method == 'POST':
+        company = request.form.get('company_name', '').strip()
+        ticker = request.form.get('ticker', '').strip().upper()
+        shares_text = request.form.get('shares', '').strip()
+        price_text = request.form.get('starting_price', '').strip()
+
+        # Turn the shares and price boxes into numbers (None if not valid)
+        shares = int(shares_text) if shares_text.isdigit() else None
+        try:
+            price = Decimal(price_text).quantize(Decimal('0.01'))
+            if not price.is_finite():
+                price = None
+        except InvalidOperation:
+            price = None
+
+        if not company or not ticker or not shares_text or not price_text:
+            flash('Please fill in every field.', 'danger')
+        elif Stock.query.filter_by(ticker=ticker).first():
+            flash('Ticker {} is already used.'.format(ticker), 'danger')
+        elif shares is None or shares == 0:
+            flash('Shares must be a whole number greater than 0.', 'danger')
+        elif price is None or price <= 0:
+            flash('Starting price must be more than $0.00.', 'danger')
+        else:
+            try:
+                # Save the stock and its first price record in one commit
+                stock = Stock(company_name=company, ticker=ticker,
+                              shares_outstanding=shares, shares_available=shares,
+                              current_price=price, created_by=current_user.id)
+                db.session.add(stock)
+                db.session.flush()
+                first_price = StockPriceHistory(stock_id=stock.id, old_price=price, new_price=price)
+                db.session.add(first_price)
+                db.session.commit()
+                flash('Added {} - {} at {}.'.format(ticker, company, money(price)), 'success')
+                return redirect(url_for('admin_stocks'))
+            except Exception:
+                db.session.rollback()
+                flash('Something went wrong. The stock was not saved.', 'danger')
+
+    # Every stock with the username of the admin who added it
+    stocks = db.session.query(Stock, User.username).join(User, Stock.created_by == User.id).order_by(Stock.ticker).all()
+    return render_template('admin_stocks.html', stocks=stocks, company=company, ticker=ticker,
+                           shares_text=shares_text, price_text=price_text)
+
+
+WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+
+# Template filter: {{ row.open_time | clock }} shows 9:00 AM
+@app.template_filter('clock')
+def format_time(value):
+    if value is None:
+        return ''
+    return value.strftime('%I:%M %p').lstrip('0')
+
+
+# Template filter: {{ closure.closure_date | shortdate }} shows Nov 26, 2026
+@app.template_filter('shortdate')
+def format_date(value):
+    if value is None:
+        return ''
+    return value.strftime('%b %d, %Y').replace(' 0', ' ')
+
+
+# Reads a time box like "09:00" (or "09:00:00"). Returns None if not valid.
+def read_time(text):
+    for time_format in ('%H:%M', '%H:%M:%S'):
+        try:
+            return datetime.strptime(text, time_format).time()
+        except ValueError:
+            pass
+    return None
+
+
+# Shows the weekly hours and holidays (administrators only). Two forms post
+# here: "save_hours" changes one day's hours, "add_closure" adds a holiday.
+@app.route('/admin/market-hours', methods=['GET', 'POST'])
+@admin_required
+def admin_market_hours():
+    form_day = 'Monday'
+    form_status = 'open'
+    open_text = '09:00'
+    close_text = '17:00'
+    closure_text = ''
+    reason_text = ''
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        # Change one day's open/closed status and times
+        if action == 'save_hours':
+            form_day = request.form.get('day', '')
+            form_status = request.form.get('status', 'open')
+            open_text = request.form.get('open_time', '').strip()
+            close_text = request.form.get('close_time', '').strip()
+            row = MarketHour.query.filter_by(day_of_week=form_day).first()
+            open_time = read_time(open_text)
+            close_time = read_time(close_text)
+
+            if row is None:
+                flash('Please pick a day.', 'danger')
+            elif form_status == 'open' and (open_time is None or close_time is None):
+                flash('Please enter an open time and a close time.', 'danger')
+            elif form_status == 'open' and close_time <= open_time:
+                flash('Close time must be after open time.', 'danger')
+            else:
+                try:
+                    if form_status == 'open':
+                        row.is_open = True
+                        row.open_time = open_time
+                        row.close_time = close_time
+                        message = 'Saved {} hours: {} to {}.'.format(
+                            form_day, format_time(open_time), format_time(close_time))
+                    else:
+                        row.is_open = False
+                        row.open_time = None
+                        row.close_time = None
+                        message = 'Saved {} as closed.'.format(form_day)
+                    row.updated_by = current_user.id
+                    row.updated_at = now_az()
+                    db.session.commit()
+                    flash(message, 'success')
+                    return redirect(url_for('admin_market_hours'))
+                except Exception:
+                    db.session.rollback()
+                    flash('Something went wrong. The hours were not saved.', 'danger')
+
+        # Add a holiday when the market is closed all day
+        elif action == 'add_closure':
+            closure_text = request.form.get('closure_date', '').strip()
+            reason_text = request.form.get('reason', '').strip()
+            try:
+                closure_date = datetime.strptime(closure_text, '%Y-%m-%d').date()
+            except ValueError:
+                closure_date = None
+
+            if closure_date is None or not reason_text:
+                flash('Please enter a valid date and a reason.', 'danger')
+            elif MarketClosure.query.filter_by(closure_date=closure_date).first():
+                flash('{} is already a closure.'.format(format_date(closure_date)), 'danger')
+            else:
+                try:
+                    closure = MarketClosure(closure_date=closure_date, reason=reason_text,
+                                            updated_by=current_user.id)
+                    db.session.add(closure)
+                    db.session.commit()
+                    flash('Added closure for {}: {}.'.format(format_date(closure_date), reason_text), 'success')
+                    return redirect(url_for('admin_market_hours'))
+                except Exception:
+                    db.session.rollback()
+                    flash('Something went wrong. The closure was not saved.', 'danger')
+
+    # Weekly hours (Monday first) and holidays, each with the admin's username
+    hours = db.session.query(MarketHour, User.username).outerjoin(User, MarketHour.updated_by == User.id).all()
+    hours.sort(key=lambda item: WEEK_DAYS.index(item[0].day_of_week))
+    closures = db.session.query(MarketClosure, User.username).outerjoin(User, MarketClosure.updated_by == User.id).order_by(MarketClosure.closure_date).all()
+    return render_template('admin_market_hours.html', hours=hours, closures=closures, week_days=WEEK_DAYS,
+                           form_day=form_day, form_status=form_status, open_text=open_text,
+                           close_text=close_text, closure_text=closure_text, reason_text=reason_text)
+
 
 # ======================================================================
 # === DINO ===
@@ -301,6 +475,23 @@ def read_quantity(text):
     if not text.isdigit() or int(text) == 0:
         return None
     return int(text)
+
+
+# Gets a PENDING trade, but only if it is in one of the customer's portfolios.
+def get_my_pending_trade(trade_id):
+    trade = Trade.query.filter_by(id=trade_id, status='PENDING').first()
+    if trade is None or get_my_portfolio(trade.portfolio_id) is None:
+        return None
+    return trade
+
+
+# Undoes anything half saved and marks the trade FAILED with the reason.
+def fail_trade(trade, reason):
+    db.session.rollback()
+    trade.status = 'FAILED'
+    trade.failure_reason = reason
+    db.session.commit()
+    flash('Order failed: ' + reason, 'danger')
 
 
 # BUY - Shows the order form (GET). Checks the order and shows the
@@ -339,16 +530,235 @@ def buy():
         # Save the order as PENDING until the customer clicks Confirm or Cancel
         trade = Trade(portfolio_id=portfolio.id, stock_id=stock.id, trade_type='BUY',
                       quantity=quantity, price=stock.current_price, total=total, status='PENDING')
-        db.session.add(trade)
-        db.session.commit()
+        try:
+            db.session.add(trade)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash('Something went wrong while saving the order. Please try again.', 'danger')
+            return redirect(url_for('buy'))
 
         new_balance = current_user.cash_balance - total
         return render_template('buy.html', trade=trade, stock=stock, portfolio=portfolio,
                                new_balance=new_balance)
 
-    portfolios = Portfolio.query.filter_by(user_id=current_user.id).all()
+    portfolios = Portfolio.query.filter_by(user_id=current_user.id).order_by(Portfolio.name).all()
     stocks = Stock.query.order_by(Stock.ticker).all()
     return render_template('buy.html', portfolios=portfolios, stocks=stocks)
+
+
+# BUY - Confirm button. In one save: cash down, shares available down,
+# holding up, trade COMPLETED and a BUY cash row. If anything fails,
+# nothing changes and the trade is saved as FAILED with the reason.
+@app.route('/buy/confirm/<int:trade_id>', methods=['POST'])
+@login_required
+def confirm_buy(trade_id):
+    trade = get_my_pending_trade(trade_id)
+    if trade is None:
+        flash('That order could not be found.', 'danger')
+        return redirect(url_for('buy'))
+
+    stock = db.session.get(Stock, trade.stock_id)
+
+    # Check again, things could have changed since the customer reviewed it
+    if not is_market_open():
+        fail_trade(trade, MARKET_CLOSED)
+        return redirect(url_for('buy'))
+    if trade.quantity > stock.shares_available:
+        fail_trade(trade, 'Not enough shares available.')
+        return redirect(url_for('buy'))
+    if trade.total > current_user.cash_balance:
+        fail_trade(trade, 'Not enough cash.')
+        return redirect(url_for('buy'))
+
+    try:
+        current_user.cash_balance = current_user.cash_balance - trade.total
+        stock.shares_available = stock.shares_available - trade.quantity
+
+        holding = Holding.query.filter_by(portfolio_id=trade.portfolio_id, stock_id=stock.id).first()
+        if holding is None:
+            holding = Holding(portfolio_id=trade.portfolio_id, stock_id=stock.id, quantity=0)
+            db.session.add(holding)
+        holding.quantity = holding.quantity + trade.quantity
+
+        trade.status = 'COMPLETED'
+        db.session.add(CashTransaction(user_id=current_user.id, transaction_type='BUY', amount=trade.total,
+                                       status='COMPLETED', related_trade_id=trade.id))
+        db.session.commit()
+        flash('Bought {:,} shares of {} for {}. Your new cash balance is {}.'.format(
+            trade.quantity, stock.ticker, money(trade.total), money(current_user.cash_balance)), 'success')
+    except Exception:
+        fail_trade(trade, 'Something went wrong while saving the order. Please try again.')
+
+    return redirect(url_for('buy'))
+
+
+# Cancel button on the Buy and Sell confirm boxes. Marks the order
+# CANCELED and changes nothing else.
+@app.route('/trade/cancel/<int:trade_id>', methods=['POST'])
+@login_required
+def cancel_trade(trade_id):
+    trade = get_my_pending_trade(trade_id)
+    if trade is None:
+        flash('That order could not be found.', 'danger')
+        return redirect(url_for('buy'))
+
+    try:
+        trade.status = 'CANCELED'
+        db.session.commit()
+        flash('Order canceled. Nothing was changed.', 'success')
+    except Exception:
+        db.session.rollback()
+        flash('Something went wrong while canceling the order. Please try again.', 'danger')
+
+    if trade.trade_type == 'SELL':
+        return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+    return redirect(url_for('buy'))
+
+# SELL - Shows only the stocks held in the chosen portfolio (GET). Checks
+# the order and shows the confirm box with the expected proceeds (POST).
+@app.route('/sell', methods=['GET', 'POST'])
+@login_required
+def sell():
+    if request.method == 'POST':
+        portfolio_id = request.form.get('portfolio_id', type=int)
+        portfolio = get_my_portfolio(portfolio_id)
+        stock = Stock.query.filter_by(id=request.form.get('stock_id', type=int)).first()
+        quantity = read_quantity(request.form.get('quantity'))
+
+        holding = None
+        if portfolio and stock:
+            holding = Holding.query.filter_by(portfolio_id=portfolio.id, stock_id=stock.id).first()
+
+        if not is_market_open():
+            flash(MARKET_CLOSED, 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        if holding is None:
+            flash('Please choose a stock you own in this portfolio.', 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        if quantity is None:
+            flash('Please enter a whole number of shares greater than 0.', 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        if quantity > holding.quantity:
+            flash('You only own {:,} shares of {} in this portfolio.'.format(
+                holding.quantity, stock.ticker), 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        # Save the order as PENDING until the customer clicks Confirm or Cancel
+        total = stock.current_price * quantity
+        trade = Trade(portfolio_id=portfolio.id, stock_id=stock.id, trade_type='SELL',
+                      quantity=quantity, price=stock.current_price, total=total, status='PENDING')
+        try:
+            db.session.add(trade)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash('Something went wrong while saving the order. Please try again.', 'danger')
+            return redirect(url_for('sell', portfolio_id=portfolio_id))
+
+        new_balance = current_user.cash_balance + total
+        return render_template('sell.html', trade=trade, stock=stock, portfolio=portfolio,
+                               new_balance=new_balance)
+
+    portfolios = Portfolio.query.filter_by(user_id=current_user.id).order_by(Portfolio.name).all()
+
+    # Show the portfolio picked in the dropdown, or the first one
+    portfolio = get_my_portfolio(request.args.get('portfolio_id', type=int))
+    if portfolio is None and portfolios:
+        portfolio = portfolios[0]
+
+    # Each row in the table needs the holding and its stock
+    holdings = []
+    if portfolio:
+        for holding in Holding.query.filter_by(portfolio_id=portfolio.id).all():
+            stock = db.session.get(Stock, holding.stock_id)
+            holdings.append((holding, stock))
+
+    return render_template('sell.html', portfolios=portfolios, portfolio=portfolio, holdings=holdings)
+
+
+# SELL - Confirm button. In one save: holding down, shares back to the
+# inventory, cash up, trade COMPLETED and a SELL cash row. If anything
+# fails, nothing changes and the trade is saved as FAILED with the reason.
+@app.route('/sell/confirm/<int:trade_id>', methods=['POST'])
+@login_required
+def confirm_sell(trade_id):
+    trade = get_my_pending_trade(trade_id)
+    if trade is None:
+        flash('That order could not be found.', 'danger')
+        return redirect(url_for('sell'))
+
+    stock = db.session.get(Stock, trade.stock_id)
+    holding = Holding.query.filter_by(portfolio_id=trade.portfolio_id, stock_id=stock.id).first()
+
+    # Check again, things could have changed since the customer reviewed it
+    if not is_market_open():
+        fail_trade(trade, MARKET_CLOSED)
+        return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+    if holding is None or trade.quantity > holding.quantity:
+        fail_trade(trade, 'You no longer own enough shares.')
+        return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+
+    try:
+        holding.quantity = holding.quantity - trade.quantity
+        if holding.quantity == 0:
+            db.session.delete(holding)
+        stock.shares_available = stock.shares_available + trade.quantity
+        current_user.cash_balance = current_user.cash_balance + trade.total
+
+        trade.status = 'COMPLETED'
+        db.session.add(CashTransaction(user_id=current_user.id, transaction_type='SELL', amount=trade.total,
+                                       status='COMPLETED', related_trade_id=trade.id))
+        db.session.commit()
+        flash('Sold {:,} shares of {} for {}. Your new cash balance is {}.'.format(
+            trade.quantity, stock.ticker, money(trade.total), money(current_user.cash_balance)), 'success')
+    except Exception:
+        fail_trade(trade, 'Something went wrong while saving the order. Please try again.')
+
+    return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+
+
+# PRICE GENERATOR (SAD Map 10) - Changes every stock price once. Does
+# nothing when the market is closed (weekly hours or a holiday). Each price
+# moves up or down by up to 2% and never goes below $0.01. The new prices
+# and their history records are saved together.
+def update_prices():
+    with app.app_context():
+        if not is_market_open():
+            return
+
+        try:
+            for stock in Stock.query.all():
+                old_price = stock.current_price
+                change = Decimal(random.uniform(-0.02, 0.02))
+                new_price = round(old_price * (1 + change), 2)
+                if new_price < Decimal('0.01'):
+                    new_price = Decimal('0.01')
+
+                stock.current_price = new_price
+                db.session.add(StockPriceHistory(stock_id=stock.id, old_price=old_price, new_price=new_price))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+# Waits 5 minutes, updates the prices, then starts the next 5 minute wait.
+# daemon=True lets the app still close normally with CTRL+C.
+def start_price_generator():
+    timer = threading.Timer(300, run_price_generator)
+    timer.daemon = True
+    timer.start()
+
+
+def run_price_generator():
+    update_prices()
+    start_price_generator()
+
+
+start_price_generator()
 
 # === VIPRA ===
 # Create a portfolio for the logged-in customer
