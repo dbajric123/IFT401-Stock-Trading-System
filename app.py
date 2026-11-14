@@ -366,7 +366,7 @@ def buy():
         return render_template('buy.html', trade=trade, stock=stock, portfolio=portfolio,
                                new_balance=new_balance)
 
-    portfolios = Portfolio.query.filter_by(user_id=current_user.id).all()
+    portfolios = Portfolio.query.filter_by(user_id=current_user.id).order_by(Portfolio.name).all()
     stocks = Stock.query.order_by(Stock.ticker).all()
     return render_template('buy.html', portfolios=portfolios, stocks=stocks)
 
@@ -417,8 +417,8 @@ def confirm_buy(trade_id):
     return redirect(url_for('buy'))
 
 
-# Cancel button on the confirm box. Marks the order CANCELED and changes
-# nothing else.
+# Cancel button on the Buy and Sell confirm boxes. Marks the order
+# CANCELED and changes nothing else.
 @app.route('/trade/cancel/<int:trade_id>', methods=['POST'])
 @login_required
 def cancel_trade(trade_id):
@@ -435,6 +435,8 @@ def cancel_trade(trade_id):
         db.session.rollback()
         flash('Something went wrong while canceling the order. Please try again.', 'danger')
 
+    if trade.trade_type == 'SELL':
+        return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
     return redirect(url_for('buy'))
 
 # SELL - Shows only the stocks held in the chosen portfolio (GET). Checks
@@ -500,3 +502,44 @@ def sell():
             holdings.append((holding, stock))
 
     return render_template('sell.html', portfolios=portfolios, portfolio=portfolio, holdings=holdings)
+
+
+# SELL - Confirm button. In one save: holding down, shares back to the
+# inventory, cash up, trade COMPLETED and a SELL cash row. If anything
+# fails, nothing changes and the trade is saved as FAILED with the reason.
+@app.route('/sell/confirm/<int:trade_id>', methods=['POST'])
+@login_required
+def confirm_sell(trade_id):
+    trade = get_my_pending_trade(trade_id)
+    if trade is None:
+        flash('That order could not be found.', 'danger')
+        return redirect(url_for('sell'))
+
+    stock = db.session.get(Stock, trade.stock_id)
+    holding = Holding.query.filter_by(portfolio_id=trade.portfolio_id, stock_id=stock.id).first()
+
+    # Check again, things could have changed since the customer reviewed it
+    if not is_market_open():
+        fail_trade(trade, MARKET_CLOSED)
+        return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+    if holding is None or trade.quantity > holding.quantity:
+        fail_trade(trade, 'You no longer own enough shares.')
+        return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+
+    try:
+        holding.quantity = holding.quantity - trade.quantity
+        if holding.quantity == 0:
+            db.session.delete(holding)
+        stock.shares_available = stock.shares_available + trade.quantity
+        current_user.cash_balance = current_user.cash_balance + trade.total
+
+        trade.status = 'COMPLETED'
+        db.session.add(CashTransaction(user_id=current_user.id, transaction_type='SELL', amount=trade.total,
+                                       status='COMPLETED', related_trade_id=trade.id))
+        db.session.commit()
+        flash('Sold {:,} shares of {} for {}. Your new cash balance is {}.'.format(
+            trade.quantity, stock.ticker, money(trade.total), money(current_user.cash_balance)), 'success')
+    except Exception:
+        fail_trade(trade, 'Something went wrong while saving the order. Please try again.')
+
+    return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
