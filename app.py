@@ -1,5 +1,7 @@
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
+import random
+import threading
 from decimal import Decimal, InvalidOperation
 
 from flask import Flask, render_template, redirect, url_for, flash, request
@@ -715,3 +717,43 @@ def confirm_sell(trade_id):
         fail_trade(trade, 'Something went wrong while saving the order. Please try again.')
 
     return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
+
+
+# PRICE GENERATOR (SAD Map 10) - Changes every stock price once. Does
+# nothing when the market is closed (weekly hours or a holiday). Each price
+# moves up or down by up to 2% and never goes below $0.01. The new prices
+# and their history records are saved together.
+def update_prices():
+    with app.app_context():
+        if not is_market_open():
+            return
+
+        try:
+            for stock in Stock.query.all():
+                old_price = stock.current_price
+                change = Decimal(random.uniform(-0.02, 0.02))
+                new_price = round(old_price * (1 + change), 2)
+                if new_price < Decimal('0.01'):
+                    new_price = Decimal('0.01')
+
+                stock.current_price = new_price
+                db.session.add(StockPriceHistory(stock_id=stock.id, old_price=old_price, new_price=new_price))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+# Waits 5 minutes, updates the prices, then starts the next 5 minute wait.
+# daemon=True lets the app still close normally with CTRL+C.
+def start_price_generator():
+    timer = threading.Timer(300, run_price_generator)
+    timer.daemon = True
+    timer.start()
+
+
+def run_price_generator():
+    update_prices()
+    start_price_generator()
+
+
+start_price_generator()
