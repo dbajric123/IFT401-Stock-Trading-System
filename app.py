@@ -1,3 +1,5 @@
+import os
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
 
@@ -7,7 +9,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_bcrypt import Bcrypt
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = "mysql+pymysql://admin:password@my-rds-instance.cnmq20wmkwnp.us-east-2.rds.amazonaws.com:3306/stock_trading"
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['STOCK_DB_URL']
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 
@@ -347,3 +349,129 @@ def buy():
     portfolios = Portfolio.query.filter_by(user_id=current_user.id).all()
     stocks = Stock.query.order_by(Stock.ticker).all()
     return render_template('buy.html', portfolios=portfolios, stocks=stocks)
+
+# === VIPRA ===
+# Create a portfolio for the logged-in customer
+
+@app.route('/portfolio/new', methods=['GET', 'POST'])
+@login_required
+def create_portfolio():
+    if current_user.role == 'admin':
+        return redirect('/admin/stocks')
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+
+        if not name:
+            flash('Please enter a portfolio name.', 'danger')
+        elif Portfolio.query.filter_by(user_id=current_user.id, name=name).first():
+            flash('You already have a portfolio with that name.', 'danger')
+        else:
+            try:
+                portfolio = Portfolio(user_id=current_user.id, name=name)
+                db.session.add(portfolio)
+                db.session.commit()
+                flash('Portfolio created successfully.', 'success')
+                return redirect(url_for('create_portfolio'))
+            except Exception:
+                db.session.rollback()
+                flash('Could not create portfolio.', 'danger')
+
+    portfolios = Portfolio.query.filter_by(
+        user_id=current_user.id
+    ).order_by(Portfolio.created_at.desc()).all()
+
+    return render_template('create_portfolio.html', portfolios=portfolios)
+
+# Stock Inventory - show all available stocks
+
+@app.route('/stocks')
+@login_required
+def stock_inventory():
+    if current_user.role == 'admin':
+        return redirect('/admin/stocks')
+
+    stocks = Stock.query.order_by(Stock.ticker).all()
+
+    return render_template('stocks.html', stocks=stocks)
+
+# Deposit Cash
+
+@app.route('/deposit', methods=['GET', 'POST'])
+@login_required
+def deposit():
+    if current_user.role == 'admin':
+        return redirect('/admin/stocks')
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'review':
+            try:
+                amount = Decimal(request.form.get('amount', ''))
+                if (not amount.is_finite() or amount <= 0 or
+                        amount.as_tuple().exponent < -2):
+                    raise ValueError()
+            except (InvalidOperation, ValueError):
+                flash('Amount must be more than $0.00 and use at most two decimal places.', 'danger')
+                return redirect(url_for('deposit'))
+
+            if current_user.cash_balance + amount > Decimal('9999999999.99'):
+                flash('Deposit amount is too large.', 'danger')
+                return redirect(url_for('deposit'))
+
+            transaction = CashTransaction(
+                user_id=current_user.id,
+                transaction_type='DEPOSIT',
+                amount=amount,
+                status='PENDING'
+            )
+
+            db.session.add(transaction)
+            db.session.commit()
+
+            return redirect(url_for('deposit', pending=transaction.id))
+
+        if action in ('confirm', 'cancel'):
+            transaction = CashTransaction.query.filter_by(
+                id=request.form.get('transaction_id', type=int),
+                user_id=current_user.id,
+                transaction_type='DEPOSIT',
+                status='PENDING'
+            ).first()
+
+            if not transaction:
+                flash('Deposit not found or already processed.', 'danger')
+                return redirect(url_for('deposit'))
+
+            if action == 'cancel':
+                transaction.status = 'CANCELED'
+                db.session.commit()
+                flash('Deposit canceled.', 'success')
+            else:
+                if current_user.cash_balance + transaction.amount > Decimal('9999999999.99'):
+                    transaction.status = 'FAILED'
+                    transaction.failure_reason = 'Deposit exceeds balance limit.'
+                    db.session.commit()
+                    flash('Deposit amount is too large.', 'danger')
+                    return redirect(url_for('deposit'))
+
+                current_user.cash_balance += transaction.amount
+                transaction.status = 'COMPLETED'
+                db.session.commit()
+                flash('Deposit completed successfully.', 'success')
+
+            return redirect(url_for('deposit'))
+
+    pending = None
+    pending_id = request.args.get('pending', type=int)
+
+    if pending_id:
+        pending = CashTransaction.query.filter_by(
+            id=pending_id,
+            user_id=current_user.id,
+            transaction_type='DEPOSIT',
+            status='PENDING'
+        ).first()
+
+    return render_template('deposit.html', pending=pending)

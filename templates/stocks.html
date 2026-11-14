@@ -1,0 +1,39 @@
+
+{% extends "base.html" %}
+
+{% block title %}Stock Inventory{% endblock %}
+
+{% block subtitle %}Every stock for sale, with its current price.{% endblock %}
+
+{% block content %}
+
+{% if stocks %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Ticker</th>
+            <th>Company</th>
+            <th>Current Price</th>
+            <th>Shares Available</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for stock in stocks %}
+        <tr>
+            <td>{{ stock.ticker }}</td>
+            <td>{{ stock.company_name }}</td>
+            <td>{{ stock.current_price | money }}</td>
+            <td>{{ "{:,}".format(stock.shares_available) }}</td>
+            <td>
+                <a href="/buy?stock_id={{ stock.id }}">Buy</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">There are no stocks for sale yet.</p>
+{% endif %}
+
+{% endblock %}
