@@ -337,6 +337,122 @@ def admin_stocks():
                            shares_text=shares_text, price_text=price_text)
 
 
+WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+
+# Template filter: {{ row.open_time | clock }} shows 9:00 AM
+@app.template_filter('clock')
+def format_time(value):
+    if value is None:
+        return ''
+    return value.strftime('%I:%M %p').lstrip('0')
+
+
+# Template filter: {{ closure.closure_date | shortdate }} shows Nov 26, 2026
+@app.template_filter('shortdate')
+def format_date(value):
+    if value is None:
+        return ''
+    return value.strftime('%b %d, %Y').replace(' 0', ' ')
+
+
+# Reads a time box like "09:00" (or "09:00:00"). Returns None if not valid.
+def read_time(text):
+    for time_format in ('%H:%M', '%H:%M:%S'):
+        try:
+            return datetime.strptime(text, time_format).time()
+        except ValueError:
+            pass
+    return None
+
+
+# Shows the weekly hours and holidays (administrators only). Two forms post
+# here: "save_hours" changes one day's hours, "add_closure" adds a holiday.
+@app.route('/admin/market-hours', methods=['GET', 'POST'])
+@admin_required
+def admin_market_hours():
+    form_day = 'Monday'
+    form_status = 'open'
+    open_text = '09:00'
+    close_text = '17:00'
+    closure_text = ''
+    reason_text = ''
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        # Change one day's open/closed status and times
+        if action == 'save_hours':
+            form_day = request.form.get('day', '')
+            form_status = request.form.get('status', 'open')
+            open_text = request.form.get('open_time', '').strip()
+            close_text = request.form.get('close_time', '').strip()
+            row = MarketHour.query.filter_by(day_of_week=form_day).first()
+            open_time = read_time(open_text)
+            close_time = read_time(close_text)
+
+            if row is None:
+                flash('Please pick a day.', 'danger')
+            elif form_status == 'open' and (open_time is None or close_time is None):
+                flash('Please enter an open time and a close time.', 'danger')
+            elif form_status == 'open' and close_time <= open_time:
+                flash('Close time must be after open time.', 'danger')
+            else:
+                try:
+                    if form_status == 'open':
+                        row.is_open = True
+                        row.open_time = open_time
+                        row.close_time = close_time
+                        message = 'Saved {} hours: {} to {}.'.format(
+                            form_day, format_time(open_time), format_time(close_time))
+                    else:
+                        row.is_open = False
+                        row.open_time = None
+                        row.close_time = None
+                        message = 'Saved {} as closed.'.format(form_day)
+                    row.updated_by = current_user.id
+                    row.updated_at = now_az()
+                    db.session.commit()
+                    flash(message, 'success')
+                    return redirect(url_for('admin_market_hours'))
+                except Exception:
+                    db.session.rollback()
+                    flash('Something went wrong. The hours were not saved.', 'danger')
+
+        # Add a holiday when the market is closed all day
+        elif action == 'add_closure':
+            closure_text = request.form.get('closure_date', '').strip()
+            reason_text = request.form.get('reason', '').strip()
+            try:
+                closure_date = datetime.strptime(closure_text, '%Y-%m-%d').date()
+            except ValueError:
+                closure_date = None
+
+            if closure_date is None or not reason_text:
+                flash('Please enter a valid date and a reason.', 'danger')
+            elif MarketClosure.query.filter_by(closure_date=closure_date).first():
+                flash('{} is already a closure.'.format(format_date(closure_date)), 'danger')
+            else:
+                try:
+                    closure = MarketClosure(closure_date=closure_date, reason=reason_text,
+                                            updated_by=current_user.id)
+                    db.session.add(closure)
+                    db.session.commit()
+                    flash('Added closure for {}: {}.'.format(format_date(closure_date), reason_text), 'success')
+                    return redirect(url_for('admin_market_hours'))
+                except Exception:
+                    db.session.rollback()
+                    flash('Something went wrong. The closure was not saved.', 'danger')
+
+    # Weekly hours (Monday first) and holidays, each with the admin's username
+    hours = db.session.query(MarketHour, User.username).outerjoin(User, MarketHour.updated_by == User.id).all()
+    hours.sort(key=lambda item: WEEK_DAYS.index(item[0].day_of_week))
+    closures = db.session.query(MarketClosure, User.username).outerjoin(User, MarketClosure.updated_by == User.id).order_by(MarketClosure.closure_date).all()
+    return render_template('admin_market_hours.html', hours=hours, closures=closures, week_days=WEEK_DAYS,
+                           form_day=form_day, form_status=form_status, open_text=open_text,
+                           close_text=close_text, closure_text=closure_text, reason_text=reason_text)
+
+
 # ======================================================================
 # === DINO ===
 # Buy Stock (SAD Map 3) and Sell Stock (SAD Map 4)
