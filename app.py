@@ -721,6 +721,59 @@ def confirm_sell(trade_id):
     return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
 
 
+# === VIPRA: MY PORTFOLIO DASHBOARD ===
+
+@app.route('/')
+@login_required
+def dashboard():
+    if current_user.role == 'admin':
+        return redirect('/admin/stocks')
+
+    portfolios = Portfolio.query.filter_by(
+        user_id=current_user.id
+    ).order_by(Portfolio.name).all()
+
+    cash_balance = current_user.cash_balance or Decimal('0.00')
+    selected_portfolio = None
+    holdings = []
+    total_value = cash_balance
+
+    if portfolios:
+        requested_id = request.args.get('portfolio_id', type=int)
+
+        selected_portfolio = next(
+            (p for p in portfolios if p.id == requested_id),
+            portfolios[0]
+        )
+
+        records = db.session.query(Holding, Stock).join(
+            Stock, Holding.stock_id == Stock.id
+        ).filter(
+            Holding.portfolio_id == selected_portfolio.id
+        ).order_by(Stock.ticker).all()
+
+        for holding, stock in records:
+            value = stock.current_price * holding.quantity
+
+            holdings.append({
+                'ticker': stock.ticker,
+                'company': stock.company_name,
+                'quantity': holding.quantity,
+                'price': stock.current_price,
+                'value': value
+            })
+
+            total_value += value
+
+    return render_template(
+        'portfolio.html',
+        portfolios=portfolios,
+        selected_portfolio=selected_portfolio,
+        holdings=holdings,
+        cash_balance=cash_balance,
+        total_value=total_value
+    )
+
 # PRICE GENERATOR (SAD Map 10) - Changes every stock price once. Does
 # nothing when the market is closed (weekly hours or a holiday). Each price
 # moves up or down by up to 2% and never goes below $0.01. The new prices

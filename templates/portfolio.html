@@ -1,0 +1,110 @@
+
+{% extends "base.html" %}
+
+{% block title %}My Portfolio{% endblock %}
+
+{% block subtitle %}
+View your cash, stocks, and total portfolio value.
+{% endblock %}
+
+{% block content %}
+
+{% if not portfolios %}
+<div class="alert alert-info">
+    You don't have any portfolios yet.
+    Create your first portfolio to get started.
+</div>
+
+<a href="/portfolio/new" class="btn btn-primary">
+    Create Portfolio
+</a>
+
+{% else %}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="/">
+            <label for="portfolio_id" class="form-label">
+                Select Portfolio
+            </label>
+
+            <select name="portfolio_id"
+                    id="portfolio_id"
+                    class="form-select mb-3"
+                    onchange="this.form.submit()">
+
+                {% for portfolio in portfolios %}
+                <option value="{{ portfolio.id }}"
+                    {% if selected_portfolio.id == portfolio.id %}
+                    selected
+                    {% endif %}>
+                    {{ portfolio.name }}
+                </option>
+                {% endfor %}
+
+            </select>
+        </form>
+
+        <a href="/stocks" class="btn btn-secondary">
+            Stocks
+        </a>
+
+        <a href="/portfolio/new" class="btn btn-primary">
+            Create Portfolio
+        </a>
+    </div>
+</div>
+
+<h4>Cash Balance: {{ cash_balance | money }}</h4>
+
+<h4 class="mt-4">My Stocks</h4>
+
+{% if holdings %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Ticker</th>
+            <th>Company</th>
+            <th>Shares</th>
+            <th>Current Price</th>
+            <th>Value</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {% for holding in holdings %}
+        <tr>
+            <td>{{ holding.ticker }}</td>
+            <td>{{ holding.company }}</td>
+            <td>{{ holding.quantity }}</td>
+            <td>{{ holding.price | money }}</td>
+            <td>{{ holding.value | money }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% else %}
+<div class="alert alert-info">
+    You don't own any stocks in this portfolio yet.
+</div>
+{% endif %}
+
+<h4 class="mt-4">
+    Total Value: {{ total_value | money }}
+</h4>
+
+<div class="mt-4">
+    <a href="/buy" class="btn btn-success">Buy Stock</a>
+    <a href="/sell" class="btn btn-primary">Sell Stock</a>
+    <a href="/deposit" class="btn btn-outline-primary">
+        Deposit Cash
+    </a>
+    <a href="/withdraw" class="btn btn-outline-secondary">
+        Withdraw Cash
+    </a>
+</div>
+
+{% endif %}
+
+{% endblock %}
