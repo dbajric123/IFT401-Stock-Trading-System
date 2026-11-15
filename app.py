@@ -455,6 +455,28 @@ def admin_market_hours():
                            close_text=close_text, closure_text=closure_text, reason_text=reason_text)
 
 
+# Shows whether the market is open, the time of the last price update and the
+# latest price changes (administrators only). It only reads data; the price
+# generator is the part that saves the changes.
+@app.route('/admin/prices')
+@admin_required
+def admin_prices():
+    # Newest 20 real changes. The starting-price record made when a stock is
+    # added (old price = new price) is not a change, so it is left out.
+    records = db.session.query(StockPriceHistory, Stock.ticker).join(Stock, StockPriceHistory.stock_id == Stock.id).filter(StockPriceHistory.old_price != StockPriceHistory.new_price).order_by(StockPriceHistory.changed_at.desc(), StockPriceHistory.id.desc()).limit(20).all()
+
+    changes = []
+    for record, ticker in records:
+        percent = (record.new_price - record.old_price) / record.old_price * 100
+        changes.append({'time': record.changed_at, 'ticker': ticker,
+                        'old_price': record.old_price, 'new_price': record.new_price,
+                        'percent': '{:+.2f}%'.format(percent)})
+
+    # The newest change is the last price update
+    last_update = changes[0]['time'] if changes else None
+    return render_template('admin_prices.html', changes=changes, last_update=last_update)
+
+
 # ======================================================================
 # === DINO ===
 # Buy Stock (SAD Map 3) and Sell Stock (SAD Map 4)

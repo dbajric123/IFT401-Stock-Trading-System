@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Price Monitor{% endblock %}
+{% block subtitle %}Market status and the latest automatic price changes. Administrators only.{% endblock %}
+
+{% block content %}
+
+<!-- Market status -->
+<p class="fw-bold">
+    <span class="me-4">Market: {{ 'Open' if market_open else 'Closed' }}</span>
+    <span class="me-4">Last price update: {% if last_update %}{{ last_update | datetime }}{% else %}None yet{% endif %}</span>
+    <span>Next update: every 5 minutes</span>
+</p>
+{% if not market_open %}
+<p class="text-muted">Market is closed. Prices are not changing.</p>
+{% endif %}
+
+<!-- Latest changes -->
+<h5>Recent Price Changes</h5>
+{% if changes %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Ticker</th>
+            <th class="text-end">Old Price</th>
+            <th class="text-end">New Price</th>
+            <th class="text-end">Change</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in changes %}
+        <tr>
+            <td>{{ c.time | datetime }}</td>
+            <td>{{ c.ticker }}</td>
+            <td class="text-end">{{ c.old_price | money }}</td>
+            <td class="text-end">{{ c.new_price | money }}</td>
+            <td class="text-end">{{ c.percent }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">No price changes yet.</p>
+{% endif %}
+
+{% endblock %}
