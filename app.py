@@ -741,6 +741,34 @@ def confirm_sell(trade_id):
     return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
 
 
+# TRANSACTION HISTORY (SAD Map 7) - The logged-in customer's buys, sells,
+# deposits and withdrawals with date, type, amount and status, newest first.
+# Only their own data is shown.
+@app.route('/history')
+@login_required
+def history():
+    rows = []
+
+    # Buys and sells from each of the customer's portfolios
+    for portfolio in Portfolio.query.filter_by(user_id=current_user.id).all():
+        for trade in Trade.query.filter_by(portfolio_id=portfolio.id).all():
+            stock = db.session.get(Stock, trade.stock_id)
+            rows.append({'date': trade.created_at, 'type': trade.trade_type,
+                         'details': '{:,} shares of {} ({})'.format(trade.quantity, stock.ticker, portfolio.name),
+                         'amount': trade.total, 'status': trade.status, 'reason': trade.failure_reason})
+
+    # Deposits and withdrawals (the cash rows for buys and sells are already
+    # shown above as their trade)
+    for cash in CashTransaction.query.filter_by(user_id=current_user.id).all():
+        if cash.transaction_type in ['DEPOSIT', 'WITHDRAWAL']:
+            rows.append({'date': cash.created_at, 'type': cash.transaction_type, 'details': '',
+                         'amount': cash.amount, 'status': cash.status, 'reason': cash.failure_reason})
+
+    # Newest first
+    rows.sort(key=lambda row: row['date'], reverse=True)
+    return render_template('history.html', rows=rows)
+
+
 # PRICE GENERATOR (SAD Map 10) - Changes every stock price once. Does
 # nothing when the market is closed (weekly hours or a holiday). Each price
 # moves up or down by up to 2% and never goes below $0.01. The new prices
