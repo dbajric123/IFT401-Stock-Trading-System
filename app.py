@@ -12,7 +12,18 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_bcrypt import Bcrypt
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['STOCK_DB_URL']
+
+from sqlalchemy.engine import URL
+
+app.config['SQLALCHEMY_DATABASE_URI'] = URL.create(
+    "mysql+pymysql",
+    username="admin",
+    password=os.environ["STOCK_DB_PASSWORD"],
+    host="my-rds-instance.cnmq20wmkwnp.us-east-2.rds.amazonaws.com",
+    port=3306,
+    database="stock_trading"
+)
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 
