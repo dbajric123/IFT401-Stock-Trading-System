@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Transaction History{% endblock %}
+{% block subtitle %}Your buys, sells, deposits and withdrawals, newest first.{% endblock %}
+
+{% block content %}
+
+{% if rows %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Details</th>
+            <th class="text-end">Amount</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row.date | datetime }}</td>
+            <td>{{ row.type }}</td>
+            <td>{{ row.details }}</td>
+            <td class="text-end">{{ row.amount | money }}</td>
+            <td>
+                {% if row.status == 'COMPLETED' %}
+                <span class="badge bg-success">COMPLETED</span>
+                {% elif row.status == 'PENDING' %}
+                <span class="badge bg-warning text-dark">PENDING</span>
+                {% elif row.status == 'CANCELED' %}
+                <span class="badge bg-secondary">CANCELED</span>
+                {% else %}
+                <span class="badge bg-danger">{{ row.status }}</span>
+                {% endif %}
+                {% if row.reason %}
+                <div class="text-muted small">{{ row.reason }}</div>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">You don't have any transactions yet.</p>
+{% endif %}
+
+{% endblock %}

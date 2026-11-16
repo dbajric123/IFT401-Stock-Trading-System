@@ -468,6 +468,28 @@ def admin_market_hours():
                            close_text=close_text, closure_text=closure_text, reason_text=reason_text)
 
 
+# Shows whether the market is open, the time of the last price update and the
+# latest price changes (administrators only). It only reads data; the price
+# generator is the part that saves the changes.
+@app.route('/admin/prices')
+@admin_required
+def admin_prices():
+    # Newest 20 real changes. The starting-price record made when a stock is
+    # added (old price = new price) is not a change, so it is left out.
+    records = db.session.query(StockPriceHistory, Stock.ticker).join(Stock, StockPriceHistory.stock_id == Stock.id).filter(StockPriceHistory.old_price != StockPriceHistory.new_price).order_by(StockPriceHistory.changed_at.desc(), StockPriceHistory.id.desc()).limit(20).all()
+
+    changes = []
+    for record, ticker in records:
+        percent = (record.new_price - record.old_price) / record.old_price * 100
+        changes.append({'time': record.changed_at, 'ticker': ticker,
+                        'old_price': record.old_price, 'new_price': record.new_price,
+                        'percent': '{:+.2f}%'.format(percent)})
+
+    # The newest change is the last price update
+    last_update = changes[0]['time'] if changes else None
+    return render_template('admin_prices.html', changes=changes, last_update=last_update)
+
+
 # ======================================================================
 # === DINO ===
 # Buy Stock (SAD Map 3) and Sell Stock (SAD Map 4)
@@ -732,58 +754,34 @@ def confirm_sell(trade_id):
     return redirect(url_for('sell', portfolio_id=trade.portfolio_id))
 
 
-# === VIPRA: MY PORTFOLIO DASHBOARD ===
 
-@app.route('/')
+# TRANSACTION HISTORY (SAD Map 7) - The logged-in customer's buys, sells,
+# deposits and withdrawals with date, type, amount and status, newest first.
+# Only their own data is shown.
+@app.route('/history')
 @login_required
-def dashboard():
-    if current_user.role == 'admin':
-        return redirect('/admin/stocks')
+def history():
+    rows = []
 
-    portfolios = Portfolio.query.filter_by(
-        user_id=current_user.id
-    ).order_by(Portfolio.name).all()
+    # Buys and sells from each of the customer's portfolios
+    for portfolio in Portfolio.query.filter_by(user_id=current_user.id).all():
+        for trade in Trade.query.filter_by(portfolio_id=portfolio.id).all():
+            stock = db.session.get(Stock, trade.stock_id)
+            rows.append({'date': trade.created_at, 'type': trade.trade_type,
+                         'details': '{:,} shares of {} ({})'.format(trade.quantity, stock.ticker, portfolio.name),
+                         'amount': trade.total, 'status': trade.status, 'reason': trade.failure_reason})
 
-    cash_balance = current_user.cash_balance or Decimal('0.00')
-    selected_portfolio = None
-    holdings = []
-    total_value = cash_balance
+    # Deposits and withdrawals (the cash rows for buys and sells are already
+    # shown above as their trade)
+    for cash in CashTransaction.query.filter_by(user_id=current_user.id).all():
+        if cash.transaction_type in ['DEPOSIT', 'WITHDRAWAL']:
+            rows.append({'date': cash.created_at, 'type': cash.transaction_type, 'details': '',
+                         'amount': cash.amount, 'status': cash.status, 'reason': cash.failure_reason})
 
-    if portfolios:
-        requested_id = request.args.get('portfolio_id', type=int)
+    # Newest first
+    rows.sort(key=lambda row: row['date'], reverse=True)
+    return render_template('history.html', rows=rows)
 
-        selected_portfolio = next(
-            (p for p in portfolios if p.id == requested_id),
-            portfolios[0]
-        )
-
-        records = db.session.query(Holding, Stock).join(
-            Stock, Holding.stock_id == Stock.id
-        ).filter(
-            Holding.portfolio_id == selected_portfolio.id
-        ).order_by(Stock.ticker).all()
-
-        for holding, stock in records:
-            value = stock.current_price * holding.quantity
-
-            holdings.append({
-                'ticker': stock.ticker,
-                'company': stock.company_name,
-                'quantity': holding.quantity,
-                'price': stock.current_price,
-                'value': value
-            })
-
-            total_value += value
-
-    return render_template(
-        'portfolio.html',
-        portfolios=portfolios,
-        selected_portfolio=selected_portfolio,
-        holdings=holdings,
-        cash_balance=cash_balance,
-        total_value=total_value
-    )
 
 # PRICE GENERATOR (SAD Map 10) - Changes every stock price once. Does
 # nothing when the market is closed (weekly hours or a holiday). Each price
