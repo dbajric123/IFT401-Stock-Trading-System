@@ -12,7 +12,7 @@ from flask_bcrypt import Bcrypt
 
 app = Flask(__name__)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = "mysql+pymysql://admin:password@my-rds-instance.cnmq20wmkwnp.us-east-2.rds.amazonaws.com:3306/stock_trading"
+app.config['SQLALCHEMY_DATABASE_URI'] = "mysql+pymysql://admin:IFT401Stocks@my-rds-instance.cnmq20wmkwnp.us-east-2.rds.amazonaws.com:3306/stock_trading"
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your-secret-key-here'
