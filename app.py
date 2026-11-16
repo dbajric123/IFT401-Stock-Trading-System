@@ -1,4 +1,3 @@
-import os
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
@@ -13,16 +12,7 @@ from flask_bcrypt import Bcrypt
 
 app = Flask(__name__)
 
-from sqlalchemy.engine import URL
-
-app.config['SQLALCHEMY_DATABASE_URI'] = URL.create(
-    "mysql+pymysql",
-    username="admin",
-    password=os.environ["STOCK_DB_PASSWORD"],
-    host="my-rds-instance.cnmq20wmkwnp.us-east-2.rds.amazonaws.com",
-    port=3306,
-    database="stock_trading"
-)
+app.config['SQLALCHEMY_DATABASE_URI'] = "mysql+pymysql://admin:password@my-rds-instance.cnmq20wmkwnp.us-east-2.rds.amazonaws.com:3306/stock_trading"
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your-secret-key-here'
