@@ -989,3 +989,87 @@ def deposit():
         ).first()
 
     return render_template('deposit.html', pending=pending)
+
+
+@app.route('/withdraw', methods=['GET', 'POST'])
+@login_required
+def withdraw():
+    if current_user.role == 'admin':
+        return redirect('/admin/stocks')
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'review':
+            try:
+                amount = Decimal(request.form.get('amount', ''))
+                if (not amount.is_finite() or amount <= 0 or
+                        amount.as_tuple().exponent < -2):
+                    raise ValueError()
+            except (InvalidOperation, ValueError):
+                flash('Amount must be more than $0.00 and use at most two decimal places.', 'danger')
+                return redirect(url_for('withdraw'))
+
+            balance = current_user.cash_balance or Decimal('0.00')
+            if amount > balance:
+                flash('Withdrawal amount exceeds your available cash balance.', 'danger')
+                return redirect(url_for('withdraw'))
+
+            transaction = CashTransaction(
+                user_id=current_user.id,
+                transaction_type='WITHDRAWAL',
+                amount=amount,
+                status='PENDING'
+            )
+            db.session.add(transaction)
+            db.session.commit()
+
+            return redirect(url_for('withdraw', pending=transaction.id))
+
+        if action in ('confirm', 'cancel'):
+            transaction = CashTransaction.query.filter_by(
+                id=request.form.get('transaction_id', type=int),
+                user_id=current_user.id,
+                transaction_type='WITHDRAWAL',
+                status='PENDING'
+            ).with_for_update().first()
+
+            if not transaction:
+                flash('Withdrawal not found or already processed.', 'danger')
+                return redirect(url_for('withdraw'))
+
+            if action == 'cancel':
+                transaction.status = 'CANCELED'
+                db.session.commit()
+                flash('Withdrawal canceled.', 'success')
+            else:
+                user = User.query.filter_by(
+                    id=current_user.id
+                ).with_for_update().first()
+                balance = user.cash_balance or Decimal('0.00')
+
+                if transaction.amount > balance:
+                    transaction.status = 'FAILED'
+                    transaction.failure_reason = 'Insufficient cash balance.'
+                    db.session.commit()
+                    flash('Insufficient cash balance.', 'danger')
+                else:
+                    user.cash_balance = balance - transaction.amount
+                    transaction.status = 'COMPLETED'
+                    db.session.commit()
+                    flash('Withdrawal completed successfully.', 'success')
+
+            return redirect(url_for('withdraw'))
+
+    pending = None
+    pending_id = request.args.get('pending', type=int)
+
+    if pending_id:
+        pending = CashTransaction.query.filter_by(
+            id=pending_id,
+            user_id=current_user.id,
+            transaction_type='WITHDRAWAL',
+            status='PENDING'
+        ).first()
+
+    return render_template('withdraw.html', pending=pending)
