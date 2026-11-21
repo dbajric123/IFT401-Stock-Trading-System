@@ -24,7 +24,7 @@ Team: Dino Bajric, Nikolas Hooper-Torres, Vipra Mehta
 | Deposit Cash | /deposit | deposit.html | Vipra |
 | Withdraw Cash | /withdraw | withdraw.html | Vipra |
 
-The **Price Generator** (Dino) has no page. Every 5 minutes, only while the market
+The **Price Generator** (Dino) has no page. Every 30 seconds, only while the market
 is open, it moves each stock price up or down by up to 2% (never below $0.01) and
 saves the change to `stocks` and `stock_price_history`. The Price Monitor page
 (Nikolas) shows those changes.

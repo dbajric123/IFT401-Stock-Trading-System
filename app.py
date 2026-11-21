@@ -849,10 +849,10 @@ def update_prices():
             db.session.rollback()
 
 
-# Waits 5 minutes, updates the prices, then starts the next 5 minute wait.
+# Waits 30 seconds, updates the prices, then starts the next 30 second wait.
 # daemon=True lets the app still close normally with CTRL+C.
 def start_price_generator():
-    timer = threading.Timer(300, run_price_generator)
+    timer = threading.Timer(30, run_price_generator)
     timer.daemon = True
     timer.start()
 
